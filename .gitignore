@@ -29,3 +29,6 @@ public/downloads/audio/
 
 /cypress/videos/
 /cypress/screenshots/
+
+# Environment variables
+.env
