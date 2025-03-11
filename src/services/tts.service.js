@@ -1,4 +1,4 @@
-const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY
+const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_PATH
 const VOICE_ID = 'FGY2WhTYpPnrIDTdsKH5'
 const BASE_URL = 'https://api.elevenlabs.io/v1'
 const AUDIO_PATH = '/downloads/audio'
