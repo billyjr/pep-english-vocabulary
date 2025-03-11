@@ -45,7 +45,10 @@
     <div class="controls">
       <div class="word-display">
         <h2 :class="{ 'text-warning': words.length === 0 }">{{ currentUnitName }}</h2>
-        <h3 v-if="words.length > 0">Current Word: {{ currentIndex + 1 }} / {{ words.length }}</h3>
+        <div class="current-word-display">
+          <h3 v-if="words.length > 0">Current Word: {{ currentIndex + 1 }} / {{ words.length }}</h3>
+          <div v-if="isLoading" class="inline-spinner"></div>
+        </div>
         <div v-if="isPreparing" class="countdown">
           Ready to start in: {{ preparationCountdown }} seconds
         </div>
@@ -90,10 +93,22 @@
         <p class="chinese">{{ currentWordDetails.chinese }}</p>
       </div>
     </div>
+
+    <!-- Loading Progress -->
+    <div v-if="isPreloading" class="preloading-overlay">
+      <div class="preloading-content">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">
+          Loading audio files: {{ Math.round(preloadProgress) }}%
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
+import { TTSService } from '../services/tts.service'
+
 export default {
   name: 'DictationApp',
   data() {
@@ -101,7 +116,6 @@ export default {
       words: [],
       currentIndex: 0,
       isWordShown: false,
-      synth: window.speechSynthesis,
       filters: {
         edition: '1',
         grade: '1',
@@ -118,7 +132,10 @@ export default {
       playCount: 0, // Track how many times current word has been played
       resumeState: null, // Store state for resuming
       isPreparing: false,
-      preparationCountdown: 5
+      preparationCountdown: 5,
+      isLoading: false,
+      isPreloading: false,
+      preloadProgress: 0
     }
   },
   mounted() {
@@ -280,21 +297,52 @@ export default {
 
       console.log('Filtered words count:', this.words.length)
     },
-    startAutoPlay() {
+    async startAutoPlay() {
       if (this.isPlaying && !this.isPaused) return
 
-      // Start preparation countdown
-      this.isPreparing = true
-      this.preparationCountdown = 5
+      // Start preloading
+      this.isPreloading = true
+      this.preloadProgress = 0
 
-      const prepTimer = setInterval(() => {
-        this.preparationCountdown--
-        if (this.preparationCountdown <= 0) {
-          clearInterval(prepTimer)
-          this.isPreparing = false
-          this.startPlayback()
-        }
-      }, 1000)
+      try {
+        // Preload all words before starting
+        const wordsToPreload = this.words.map(word => word.english)
+        await TTSService.preloadAudio(wordsToPreload, (progress) => {
+          this.preloadProgress = progress
+        })
+
+        // Start preparation countdown
+        this.isPreparing = true
+        this.preparationCountdown = 5
+
+        const prepTimer = setInterval(() => {
+          this.preparationCountdown--
+          if (this.preparationCountdown <= 0) {
+            clearInterval(prepTimer)
+            this.isPreparing = false
+            this.startPlayback()
+          }
+        }, 1000)
+      } catch (error) {
+        console.error('Failed to preload audio:', error)
+      } finally {
+        this.isPreloading = false
+      }
+    },
+    prepareCurrentUtterance() {
+      if (!this.currentWord) return
+
+      if (!this.currentUtterance) {
+        this.currentUtterance = new SpeechSynthesisUtterance(this.currentWord)
+        this.currentUtterance.rate = 0.8
+      }
+    },
+    prepareNextUtterance() {
+      if (this.currentIndex < this.words.length - 1) {
+        const nextWord = this.words[this.currentIndex + 1].english
+        this.nextUtterance = new SpeechSynthesisUtterance(nextWord)
+        this.nextUtterance.rate = 0.8
+      }
     },
     startPlayback() {
       // Always start from beginning
@@ -357,12 +405,12 @@ export default {
     async playCurrentWordTwice() {
       if (!this.isPlaying) return
 
-      this.playCount = 0
-      this.isWordShown = false
-
-      // Play first time
+      // Play first time using cached utterance
       this.playCurrentWord()
       this.playCount++
+
+      // Prepare next utterance during the wait
+      this.prepareNextUtterance()
 
       // Wait 3 seconds and play second time
       await new Promise(resolve => setTimeout(resolve, 3000))
@@ -394,6 +442,9 @@ export default {
           if (this.currentIndex < this.words.length - 1) {
             this.currentIndex++
             this.isWordShown = false // Reset word visibility for next word
+            // Use the preloaded next utterance as current
+            this.currentUtterance = this.nextUtterance
+            this.nextUtterance = null
             this.playCurrentWordTwice()
           } else {
             this.isPlaying = false
@@ -401,12 +452,17 @@ export default {
         }
       }, 1000)
     },
-    playCurrentWord() {
+    async playCurrentWord() {
       if (!this.currentWord) return
 
-      const utterance = new SpeechSynthesisUtterance(this.currentWord)
-      utterance.rate = 0.8
-      this.synth.speak(utterance)
+      try {
+        this.isLoading = true
+        await TTSService.playWord(this.currentWord)
+      } catch (error) {
+        console.error('Failed to play word:', error)
+      } finally {
+        this.isLoading = false
+      }
     },
     showWord() {
       this.isWordShown = true
@@ -422,7 +478,7 @@ export default {
     // Clean up timers when component is destroyed
     clearTimeout(this.playTimer)
     clearInterval(this.countdownTimer)
-    this.synth.cancel()
+    TTSService.clearCache()
   }
 }
 </script>
@@ -550,5 +606,49 @@ label {
 .chinese {
   font-size: 1.5rem;
   color: #2196F3;
+}
+
+.current-word-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.inline-spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.preloading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.preloading-content {
+  text-align: center;
+  color: white;
+}
+
+.loading-text {
+  margin-top: 1rem;
+  font-size: 1.2rem;
 }
 </style>
