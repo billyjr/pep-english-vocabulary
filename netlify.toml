@@ -1,0 +1,20 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  framework = "vite"
+  port = 8888
+  targetPort = 5173
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/save-audio"
+  to = "/.netlify/functions/save-audio"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200 

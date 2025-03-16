@@ -1,27 +1,40 @@
 <script>
-import DictationApp from './components/DictationApp.vue'
-
 export default {
-  name: 'App',
-  components: {
-    DictationApp
-  }
+  name: 'App'
 }
 </script>
 
 <template>
   <div id="app">
-    <DictationApp />
+    <nav>
+      <router-link to="/">Dictation</router-link> |
+      <router-link to="/test">Test Audio</router-link>
+    </nav>
+    <router-view></router-view>
   </div>
 </template>
 
 <style>
 #app {
-  font-family: Arial, sans-serif;
+  font-family: Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-align: center;
   color: #2c3e50;
-  margin: 0;
-  padding: 20px;
+}
+
+nav {
+  padding: 30px;
+}
+
+nav a {
+  font-weight: bold;
+  color: #2c3e50;
+  text-decoration: none;
+  margin: 0 10px;
+}
+
+nav a.router-link-exact-active {
+  color: #42b983;
 }
 </style>

@@ -107,7 +107,7 @@
 </template>
 
 <script>
-import { TTSService } from '../services/tts.service'
+import { ttsService } from '../services/tts.service'
 
 export default {
   name: 'DictationApp',
@@ -307,7 +307,7 @@ export default {
       try {
         // Preload all words before starting
         const wordsToPreload = this.words.map(word => word.english)
-        await TTSService.preloadAudio(wordsToPreload, (progress) => {
+        await ttsService.preloadAudio(wordsToPreload, (progress) => {
           this.preloadProgress = progress
         })
 
@@ -453,15 +453,18 @@ export default {
       }, 1000)
     },
     async playCurrentWord() {
-      if (!this.currentWord) return
+      if (!this.currentWord) return;
 
       try {
-        this.isLoading = true
-        await TTSService.playWord(this.currentWord)
+        this.isLoading = true;
+        const text = this.currentWord;  // currentWord is already the English text
+        const filename = `${text.toLowerCase().replace(/[^a-z0-9]/g, '_')}.mp3`;
+
+        await ttsService.playAudio(text, filename);
       } catch (error) {
-        console.error('Failed to play word:', error)
+        console.error('Error playing word:', error);
       } finally {
-        this.isLoading = false
+        this.isLoading = false;
       }
     },
     showWord() {
@@ -478,7 +481,7 @@ export default {
     // Clean up timers when component is destroyed
     clearTimeout(this.playTimer)
     clearInterval(this.countdownTimer)
-    TTSService.clearCache()
+    ttsService.clearCache()
   }
 }
 </script>
