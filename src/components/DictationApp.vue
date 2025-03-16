@@ -1,6 +1,6 @@
 <template>
   <div class="dictation-app">
-    <h1>Dictation Practice</h1>
+    <h1>听写小助手</h1>
 
     <!-- Selection Form -->
     <div class="selection-form">
@@ -48,6 +48,30 @@
         <div class="current-word-display">
           <h3 v-if="words.length > 0">Current Word: {{ currentIndex + 1 }} / {{ words.length }}</h3>
           <div v-if="isLoading" class="inline-spinner"></div>
+        </div>
+        <div class="audio-controls">
+          <button
+            class="btn icon-btn"
+            @click="toggleMute"
+            :title="isMuted ? 'Unmute' : 'Mute'"
+          >
+            <span class="material-icons">
+              {{ isMuted ? 'volume_off' : isPlaying ? 'volume_up' : 'volume_up' }}
+            </span>
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            v-model="volume"
+            class="volume-slider"
+            :title="'Volume: ' + Math.round(volume * 100) + '%'"
+          />
+        </div>
+        <div v-if="audioError" class="error-message">
+          {{ audioError }}
+          <button class="btn secondary" @click="retryAudio">Retry</button>
         </div>
         <div v-if="isPreparing" class="countdown">
           Ready to start in: {{ preparationCountdown }} seconds
@@ -99,8 +123,21 @@
       <div class="preloading-content">
         <div class="loading-spinner"></div>
         <div class="loading-text">
+          {{ loadingMessage }}
+        </div>
+        <div class="loading-progress">
           Loading audio files: {{ Math.round(preloadProgress) }}%
         </div>
+      </div>
+    </div>
+
+    <!-- Error with retry option -->
+    <div v-if="audioError && showRetryPreload" class="error-overlay">
+      <div class="error-content">
+        <div class="error-message">{{ audioError }}</div>
+        <button class="btn primary" @click="retryPreload">
+          Retry Loading
+        </button>
       </div>
     </div>
   </div>
@@ -135,7 +172,14 @@ export default {
       preparationCountdown: 5,
       isLoading: false,
       isPreloading: false,
-      preloadProgress: 0
+      preloadProgress: 0,
+      volume: 1,
+      isMuted: false,
+      previousVolume: 1,
+      audioError: null,
+      currentAudio: null,
+      loadingMessage: '',
+      showRetryPreload: false
     }
   },
   mounted() {
@@ -147,6 +191,17 @@ export default {
         this.applyFilters()
       },
       deep: true
+    },
+    volume(newVolume) {
+      // Update current audio volume if it exists
+      if (this.currentAudio) {
+        this.currentAudio.volume = newVolume;
+      }
+      // Update muted state
+      this.isMuted = newVolume === 0;
+      if (!this.isMuted) {
+        this.previousVolume = newVolume;
+      }
     }
   },
   computed: {
@@ -298,36 +353,65 @@ export default {
       console.log('Filtered words count:', this.words.length)
     },
     async startAutoPlay() {
-      if (this.isPlaying && !this.isPaused) return
+      if (this.isPlaying && !this.isPaused) return;
 
       // Start preloading
-      this.isPreloading = true
-      this.preloadProgress = 0
+      this.isPreloading = true;
+      this.preloadProgress = 0;
+      this.audioError = null;
 
       try {
-        // Preload all words before starting
-        const wordsToPreload = this.words.map(word => word.english)
-        await ttsService.preloadAudio(wordsToPreload, (progress) => {
-          this.preloadProgress = progress
-        })
+        // Create a queue of all words to preload
+        const wordsToPreload = this.words.map(word => word.english);
+
+        // Show initial loading message
+        this.loadingMessage = 'Starting audio preload...';
+
+        // Preload all audio files with progress tracking
+        const result = await ttsService.preloadAudio(wordsToPreload, (progress) => {
+          this.preloadProgress = progress;
+          // Update loading message based on progress
+          if (progress < 33) {
+            this.loadingMessage = 'Loading audio files...';
+          } else if (progress < 66) {
+            this.loadingMessage = 'Preparing audio playback...';
+          } else {
+            this.loadingMessage = 'Almost ready...';
+          }
+        });
+
+        // Check if we have enough successful loads
+        if (result.successRate < 0.8) {
+          throw new Error(`Failed to load enough audio files (${Math.round(result.successRate * 100)}% loaded). Please try again.`);
+        }
 
         // Start preparation countdown
-        this.isPreparing = true
-        this.preparationCountdown = 5
+        this.isPreparing = true;
+        this.preparationCountdown = 5;
+        this.loadingMessage = 'Starting playback...';
 
         const prepTimer = setInterval(() => {
-          this.preparationCountdown--
+          this.preparationCountdown--;
           if (this.preparationCountdown <= 0) {
-            clearInterval(prepTimer)
-            this.isPreparing = false
-            this.startPlayback()
+            clearInterval(prepTimer);
+            this.isPreparing = false;
+            this.startPlayback();
           }
-        }, 1000)
+        }, 1000);
       } catch (error) {
-        console.error('Failed to preload audio:', error)
+        console.error('Failed to preload audio:', error);
+        this.audioError = error.message;
+        // Add retry button for preloading
+        this.showRetryPreload = true;
       } finally {
-        this.isPreloading = false
+        this.isPreloading = false;
+        this.loadingMessage = '';
       }
+    },
+    async retryPreload() {
+      this.showRetryPreload = false;
+      this.audioError = null;
+      await this.startAutoPlay();
     },
     prepareCurrentUtterance() {
       if (!this.currentWord) return
@@ -457,12 +541,87 @@ export default {
 
       try {
         this.isLoading = true;
-        const text = this.currentWord;  // currentWord is already the English text
+        this.audioError = null;
+        const text = this.currentWord;
         const filename = `${text.toLowerCase().replace(/[^a-z0-9]/g, '_')}.mp3`;
 
-        await ttsService.playAudio(text, filename);
+        // Stop any currently playing audio
+        if (this.currentAudio) {
+          this.currentAudio.pause();
+          this.currentAudio = null;
+        }
+
+        const audio = await ttsService.playAudio(text, filename);
+        this.currentAudio = audio;
+
+        // Set volume
+        audio.volume = this.volume;
+
+        // Add loading state handling
+        let isLoaded = false;
+
+        // Promise to handle audio loading
+        const loadPromise = new Promise((resolve, reject) => {
+          // Handle successful loading
+          audio.oncanplaythrough = () => {
+            isLoaded = true;
+            resolve();
+          };
+
+          // Handle loading error
+          audio.onerror = (error) => {
+            console.error('Audio loading error:', error);
+            reject(new Error('Failed to load audio file'));
+          };
+
+          // Handle loading timeout after 10 seconds
+          setTimeout(() => {
+            if (!isLoaded) {
+              reject(new Error('Audio loading timed out'));
+            }
+          }, 10000);
+        });
+
+        // Wait for audio to load
+        await loadPromise;
+
+        // Start playback only after successful loading
+        await audio.play();
+
+        // Add error handling
+        audio.onerror = (error) => {
+          console.error('Audio playback error:', error);
+          this.audioError = 'Failed to play audio. Click retry to try again.';
+          this.isLoading = false;
+        };
+
+        // Add ended handler
+        audio.onended = () => {
+          this.currentAudio = null;
+        };
+
+        // Monitor playback
+        const playbackCheck = setInterval(() => {
+          if (!audio.paused && audio.currentTime > 0) {
+            // Audio is actually playing, clear the check
+            clearInterval(playbackCheck);
+          } else if (audio.ended) {
+            // Audio has finished, clear the check
+            clearInterval(playbackCheck);
+          } else if (!this.isLoading && !this.audioError) {
+            // If we're not loading and don't have an error, but audio isn't playing
+            this.audioError = 'Audio playback failed to start. Click retry to try again.';
+            clearInterval(playbackCheck);
+          }
+        }, 500);
+
       } catch (error) {
         console.error('Error playing word:', error);
+        this.audioError = error.message || 'Failed to play audio. Click retry to try again.';
+        if (this.currentAudio) {
+          this.currentAudio.pause();
+          this.currentAudio = null;
+        }
       } finally {
         this.isLoading = false;
       }
@@ -475,12 +634,30 @@ export default {
         this.currentIndex++
         this.isWordShown = false
       }
+    },
+    toggleMute() {
+      if (this.isMuted) {
+        this.volume = this.previousVolume;
+        this.isMuted = false;
+      } else {
+        this.previousVolume = this.volume;
+        this.volume = 0;
+        this.isMuted = true;
+      }
+    },
+    retryAudio() {
+      this.audioError = null;
+      this.playCurrentWord();
     }
   },
   beforeUnmount() {
-    // Clean up timers when component is destroyed
+    // Clean up timers and audio when component is destroyed
     clearTimeout(this.playTimer)
     clearInterval(this.countdownTimer)
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio = null;
+    }
     ttsService.clearCache()
   }
 }
@@ -653,5 +830,98 @@ label {
 .loading-text {
   margin-top: 1rem;
   font-size: 1.2rem;
+}
+
+.audio-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.3s;
+}
+
+.icon-btn:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.volume-slider {
+  width: 100px;
+  height: 4px;
+  -webkit-appearance: none;
+  background: #ddd;
+  outline: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #4CAF50;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: #4CAF50;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.error-message {
+  color: #f44336;
+  margin: 1rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.material-icons {
+  font-size: 24px;
+  color: #4CAF50;
+}
+
+.error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.error-content {
+  background-color: white;
+  padding: 2rem;
+  border-radius: 8px;
+  text-align: center;
+  max-width: 80%;
+}
+
+.loading-progress {
+  margin-top: 0.5rem;
+  font-size: 1rem;
+  color: #4CAF50;
 }
 </style>

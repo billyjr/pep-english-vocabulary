@@ -1,14 +1,21 @@
 <script>
 export default {
-  name: 'App'
+  name: 'App',
+  computed: {
+    isDevelopment() {
+      return import.meta.env.DEV
+    }
+  }
 }
 </script>
 
 <template>
   <div id="app">
     <nav>
-      <router-link to="/">Dictation</router-link> |
-      <router-link to="/test">Test Audio</router-link>
+      <router-link to="/">Dictation</router-link>
+      <template v-if="isDevelopment">
+        | <router-link to="/test">Test Audio</router-link>
+      </template>
     </nav>
     <router-view></router-view>
   </div>

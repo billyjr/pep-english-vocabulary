@@ -11,7 +11,15 @@ const routes = [
   {
     path: '/test',
     name: 'test',
-    component: AudioTest
+    component: AudioTest,
+    // Only show in development environment
+    beforeEnter: (to, from, next) => {
+      if (import.meta.env.DEV) {
+        next()
+      } else {
+        next('/')
+      }
+    }
   }
 ]
 
