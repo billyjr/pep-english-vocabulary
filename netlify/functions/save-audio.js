@@ -2,13 +2,41 @@ import pkg from 'cloudinary';
 const { v2: cloudinary } = pkg;
 
 // Configure Cloudinary
-cloudinary.config({
+const cloudinaryConfig = {
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
+};
+
+// Add debug logging for configuration
+console.log('Cloudinary Configuration:', {
+  cloud_name: cloudinaryConfig.cloud_name,
+  api_key: cloudinaryConfig.api_key ? '***' : 'missing',
+  api_secret: cloudinaryConfig.api_secret ? '***' : 'missing'
 });
 
+if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConfig.api_secret) {
+  console.error('Missing Cloudinary configuration');
+}
+
+cloudinary.config(cloudinaryConfig);
+
 export const handler = async (event) => {
+  // Add CORS headers
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+  };
+
+  // Handle OPTIONS request for CORS
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204,
+      headers
+    };
+  }
+
   console.log('Request received:', {
     method: event.httpMethod,
     path: event.path,
@@ -23,6 +51,7 @@ export const handler = async (event) => {
       if (!filename) {
         return {
           statusCode: 400,
+          headers,
           body: JSON.stringify({ error: 'Filename is required' }),
         };
       }
@@ -35,6 +64,7 @@ export const handler = async (event) => {
         console.log('Audio file found:', result.secure_url);
         return {
           statusCode: 200,
+          headers,
           body: JSON.stringify({ exists: true, url: result.secure_url }),
         };
       } catch (error) {
@@ -43,18 +73,23 @@ export const handler = async (event) => {
         if (error.error && error.error.http_code === 404) {
           console.log('Audio file not found');
           return {
-            statusCode: 200,  // Changed from 404 to 200 to match expected response
+            statusCode: 200,
+            headers,
             body: JSON.stringify({ exists: false }),
           };
         }
-        // For other errors, throw them to be caught by the outer try-catch
         throw error;
       }
     } catch (error) {
       console.error('Error checking audio:', error);
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: 'Failed to check audio file', details: error.message }),
+        headers,
+        body: JSON.stringify({
+          error: 'Failed to check audio file',
+          details: error.message,
+          stack: error.stack
+        }),
       };
     }
   }
@@ -66,6 +101,7 @@ export const handler = async (event) => {
       if (!audio || !filename) {
         return {
           statusCode: 400,
+          headers,
           body: JSON.stringify({ error: 'Audio data and filename are required' }),
         };
       }
@@ -83,6 +119,7 @@ export const handler = async (event) => {
       console.log('Audio file uploaded:', uploadResponse.secure_url);
       return {
         statusCode: 200,
+        headers,
         body: JSON.stringify({
           url: uploadResponse.secure_url,
           public_id: uploadResponse.public_id,
@@ -92,13 +129,19 @@ export const handler = async (event) => {
       console.error('Error saving audio:', error);
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: 'Failed to save audio file', details: error.message }),
+        headers,
+        body: JSON.stringify({
+          error: 'Failed to save audio file',
+          details: error.message,
+          stack: error.stack
+        }),
       };
     }
   }
 
   return {
     statusCode: 405,
+    headers,
     body: JSON.stringify({ error: 'Method not allowed' }),
   };
 };
