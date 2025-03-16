@@ -1,4 +1,5 @@
 import pkg from 'cloudinary';
+import process from 'process';
 const { v2: cloudinary } = pkg;
 
 // Configure Cloudinary
@@ -8,18 +9,22 @@ const cloudinaryConfig = {
   api_secret: process.env.CLOUDINARY_API_SECRET,
 };
 
-// Add debug logging for configuration
-console.log('Cloudinary Configuration:', {
-  cloud_name: cloudinaryConfig.cloud_name,
-  api_key: cloudinaryConfig.api_key ? '***' : 'missing',
-  api_secret: cloudinaryConfig.api_secret ? '***' : 'missing'
-});
-
+// Only log configuration status, not values
 if (!cloudinaryConfig.cloud_name || !cloudinaryConfig.api_key || !cloudinaryConfig.api_secret) {
-  console.error('Missing Cloudinary configuration');
+  console.error('Missing required Cloudinary configuration');
 }
 
 cloudinary.config(cloudinaryConfig);
+
+// Helper function to determine if we're in development
+const isDevelopment = () => process.env.NODE_ENV === 'development';
+
+// Safe logging function that only logs in development
+const devLog = (...args) => {
+  if (isDevelopment()) {
+    console.log(...args);
+  }
+};
 
 export const handler = async (event) => {
   // Add CORS headers
@@ -37,11 +42,11 @@ export const handler = async (event) => {
     };
   }
 
-  console.log('Request received:', {
+  // Development-only request logging
+  devLog('Request received:', {
     method: event.httpMethod,
     path: event.path,
-    params: event.queryStringParameters,
-    body: event.body ? JSON.parse(event.body) : null
+    params: event.queryStringParameters
   });
 
   // Handle GET request to check if audio exists
@@ -57,21 +62,19 @@ export const handler = async (event) => {
       }
 
       const publicId = `dictation-audio/${filename.replace('.mp3', '')}`;
-      console.log('Checking for audio file:', publicId);
+      devLog('Checking for audio file:', publicId);
 
       try {
         const result = await cloudinary.api.resource(publicId, { resource_type: 'video' });
-        console.log('Audio file found:', result.secure_url);
+        devLog('Audio file found');
         return {
           statusCode: 200,
           headers,
           body: JSON.stringify({ exists: true, url: result.secure_url }),
         };
       } catch (error) {
-        console.log('Cloudinary error:', error);
-        // Check if it's a "not found" error
         if (error.error && error.error.http_code === 404) {
-          console.log('Audio file not found');
+          devLog('Audio file not found');
           return {
             statusCode: 200,
             headers,
@@ -81,14 +84,13 @@ export const handler = async (event) => {
         throw error;
       }
     } catch (error) {
-      console.error('Error checking audio:', error);
+      console.error('Error checking audio');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           error: 'Failed to check audio file',
-          details: error.message,
-          stack: error.stack
+          ...(isDevelopment() && { details: error.message })
         }),
       };
     }
@@ -107,7 +109,7 @@ export const handler = async (event) => {
       }
 
       const publicId = `dictation-audio/${filename.replace('.mp3', '')}`;
-      console.log('Uploading audio file:', publicId);
+      devLog('Uploading audio file:', publicId);
 
       // Upload to Cloudinary
       const uploadResponse = await cloudinary.uploader.upload(audio, {
@@ -116,7 +118,7 @@ export const handler = async (event) => {
         format: 'mp3',
       });
 
-      console.log('Audio file uploaded:', uploadResponse.secure_url);
+      devLog('Audio file uploaded successfully');
       return {
         statusCode: 200,
         headers,
@@ -126,14 +128,13 @@ export const handler = async (event) => {
         }),
       };
     } catch (error) {
-      console.error('Error saving audio:', error);
+      console.error('Error saving audio');
       return {
         statusCode: 500,
         headers,
         body: JSON.stringify({
           error: 'Failed to save audio file',
-          details: error.message,
-          stack: error.stack
+          ...(isDevelopment() && { details: error.message })
         }),
       };
     }
